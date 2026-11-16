@@ -1,0 +1,124 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Version name comes from the tag (v1.2.3 -> 1.2.3); otherwise 1.0.<run number>
+  VERSION_CODE: ${{ github.run_number }}
+
+jobs:
+  debug:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Set version name
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION_NAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Assemble debug
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediReport-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Build signed release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Set version name
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION_NAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Prepare signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+            echo "KEYSTORE_PASSWORD=$SECRET_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$SECRET_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$SECRET_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "Using the keystore from repository secrets."
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret found - signing with a TEMPORARY key. Updates will not install over earlier builds. See README for how to add your permanent key."
+            keytool -genkeypair -v -keystore "$KS" -storetype JKS -alias medireport \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass ci-temp-pass -keypass ci-temp-pass \
+              -dname "CN=MediReport CI, O=MediReport, C=BD"
+            echo "KEYSTORE_PASSWORD=ci-temp-pass" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=medireport" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=ci-temp-pass" >> "$GITHUB_ENV"
+          fi
+          echo "KEYSTORE_PATH=$KS" >> "$GITHUB_ENV"
+
+      - name: Assemble signed release
+        run: gradle assembleRelease --stacktrace
+
+      - name: Rename and verify signature
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk "dist/MediReport-${VERSION_NAME}-release.apk"
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "dist/MediReport-${VERSION_NAME}-release.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediReport-release-${{ github.run_number }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
