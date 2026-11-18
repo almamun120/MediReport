@@ -1,12 +1,19 @@
 package com.medireport.portal.data
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import com.medireport.portal.util.Backup
 import com.medireport.portal.util.FileStore
-import com.medireport.portal.util.PdfGenerator
-import com.medireport.portal.util.TemplateEngine
+import com.medireport.portal.util.Mailer
+import com.medireport.portal.util.PdfPreview
+import com.medireport.portal.util.ReportData
+import com.medireport.portal.util.ReportDsl
+import com.medireport.portal.util.ReportPdf
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class SaveResult { OK, DUPLICATE_CODE, ERROR }
@@ -21,7 +28,8 @@ class Repository(
     private val reportDao = db.reportDao()
     private val templateDao = db.templateDao()
     private val setupDao = db.pageSetupDao()
-    private val pdf = PdfGenerator(context, store)
+    val smsDao = db.smsDao()
+    suspend fun patientByCode(code: String) = patientDao.byCode(code.trim())
     private val backup = Backup(context, db, store)
 
     val patients: Flow<List<Patient>> = patientDao.observeAll()
@@ -38,7 +46,7 @@ class Repository(
         if (setupDao.get() == null) setupDao.upsert(PageSetup())
     }
 
-    // ---------- patients ----------
+    // ---------------------------------------------------------------- patients
     fun observePatient(id: Long) = patientDao.observe(id)
     fun observeReports(patientId: Long) = reportDao.observeByPatient(patientId)
     suspend fun getPatient(id: Long) = patientDao.getById(id)
@@ -68,52 +76,66 @@ class Repository(
         patientDao.delete(p)
     }
 
-    // ---------- reports ----------
-    suspend fun addUploadedReport(patientId: Long, title: String, uri: Uri): Boolean {
+    // ---------------------------------------------------------------- reports
+    suspend fun getReport(id: Long) = reportDao.getById(id)
+    suspend fun publishedReports(patientId: Long) = reportDao.getPublishedByPatient(patientId)
+
+    suspend fun addUploadedReport(patientId: Long, title: String, uri: Uri, publish: Boolean): Boolean {
         val (name, mime) = store.importDocument(uri) ?: return false
-        reportDao.insert(Report(patientId = patientId, title = title, fileName = name, mimeType = mime))
+        reportDao.insert(Report(patientId = patientId, title = title, fileName = name, mimeType = mime, published = publish))
         return true
     }
+
+    suspend fun setPublished(reportId: Long, published: Boolean) = reportDao.setPublished(reportId, published)
+    suspend fun setAllPublished(patientId: Long, published: Boolean) = reportDao.setAllPublished(patientId, published)
 
     suspend fun deleteReport(r: Report) {
         store.deleteReport(r.fileName)
         reportDao.delete(r)
     }
 
-    /** Fills the template, renders it to PDF with the page setup and attaches it to the patient. */
+    /** Builds the lab-style PDF from a template and stores it for the patient. */
     suspend fun generateReport(
         patient: Patient,
         template: Template,
+        specimen: String,
+        consultedBy: String,
+        received: String,
+        printDate: String,
         values: Map<String, String>,
-        title: String
-    ): Report? {
-        val setup = setupDao.get() ?: PageSetup()
-        val body = TemplateEngine.render(template.content, patient, values)
-        val html = pdf.buildHtml(body, setup)
-        val out = store.newGeneratedReportFile()
-        val ok = pdf.generate(html, out)
-        if (!ok || !out.exists() || out.length() == 0L) {
-            out.delete()
-            return null
+        title: String,
+        letterhead: Boolean,
+        publish: Boolean
+    ): Report? = withContext(Dispatchers.Default) {
+        try {
+            val setup = setupDao.get() ?: PageSetup()
+            val data = ReportData(
+                title = template.title.ifBlank { template.name },
+                specimen = specimen, consultedBy = consultedBy, received = received, printDate = printDate,
+                items = ReportDsl.parse(template.content), values = values
+            )
+            val bytes = ReportPdf.build(patient, data, setup, ReportPdf.loadAssets(store, setup), letterhead)
+            val out = store.newGeneratedReportFile()
+            out.writeBytes(bytes)
+            val report = Report(
+                patientId = patient.id, title = title, fileName = out.name,
+                source = Report.SOURCE_GENERATED, published = publish
+            )
+            report.copy(id = reportDao.insert(report))
+        } catch (e: Exception) {
+            null
         }
-        val report = Report(
-            patientId = patient.id,
-            title = title,
-            fileName = out.name,
-            source = Report.SOURCE_GENERATED
-        )
-        return report.copy(id = reportDao.insert(report))
     }
 
-    // ---------- templates ----------
+    // ---------------------------------------------------------------- templates
     suspend fun getTemplate(id: Long) = templateDao.getById(id)
 
-    suspend fun saveTemplate(id: Long, name: String, content: String) {
-        val params = TemplateEngine.detectParams(content).joinToString(",")
-        if (id == 0L) templateDao.insert(Template(name = name.trim(), content = content, parameters = params))
-        else {
+    suspend fun saveTemplate(id: Long, name: String, title: String, specimen: String, content: String) {
+        if (id == 0L) {
+            templateDao.insert(Template(name = name.trim(), title = title.trim(), specimen = specimen.trim(), content = content))
+        } else {
             val old = templateDao.getById(id) ?: return
-            templateDao.update(old.copy(name = name.trim(), content = content, parameters = params))
+            templateDao.update(old.copy(name = name.trim(), title = title.trim(), specimen = specimen.trim(), content = content))
         }
     }
 
@@ -122,27 +144,113 @@ class Repository(
     suspend fun duplicateTemplate(t: Template) =
         templateDao.insert(t.copy(id = 0, name = t.name + " (copy)", createdAt = System.currentTimeMillis()))
 
-    // ---------- page setup ----------
+    // ---------------------------------------------------------------- page setup
     suspend fun getPageSetup() = setupDao.get() ?: PageSetup()
-
     suspend fun savePageSetup(s: PageSetup) = setupDao.upsert(s)
+    suspend fun importImage(uri: Uri, maxDim: Int = 1600): String? = store.importImage(uri, maxDim)
 
-    suspend fun importImage(uri: Uri): String? = store.importImage(uri)
-
-    /** Renders a sample page with the given (possibly unsaved) setup so the admin can check the layout. */
-    suspend fun generateSample(setup: PageSetup): File? {
-        val body = "<h2 style=\"text-align:center;\">Sample Report</h2>" +
-            "<p><strong>Patient Name:</strong> Sample Patient &nbsp;&nbsp; <strong>Age/Sex:</strong> 30/Male</p><hr>" +
-            "<table><tr><th>Test</th><th>Result</th><th>Normal</th></tr>" +
-            "<tr><td>Hemoglobin</td><td>13.5</td><td>12 - 16 g/dL</td></tr>" +
-            "<tr><td>WBC</td><td>7,200</td><td>4,000 - 11,000</td></tr></table>" +
-            "<p style=\"margin-top:16px;\">This is a preview of your header, footer and watermark.</p>"
-        val out = File(context.cacheDir, "preview_${System.currentTimeMillis()}.pdf")
-        val ok = pdf.generate(pdf.buildHtml(body, setup), out)
-        return if (ok && out.exists() && out.length() > 0) out else null
+    /** Renders a sample report with the (possibly unsaved) setup; returns the PDF file. */
+    suspend fun samplePdf(setup: PageSetup, letterhead: Boolean): File? = withContext(Dispatchers.Default) {
+        try {
+            val (patient, data) = ReportPdf.sample()
+            val bytes = ReportPdf.build(patient, data, setup, ReportPdf.loadAssets(store, setup), letterhead)
+            val out = File(context.cacheDir, "preview_${System.currentTimeMillis()}.pdf")
+            context.cacheDir.listFiles { f -> f.name.startsWith("preview_") }?.forEach { it.delete() }
+            out.writeBytes(bytes)
+            out
+        } catch (e: Exception) {
+            null
+        }
     }
 
-    // ---------- backup ----------
+    suspend fun samplePreview(setup: PageSetup, letterhead: Boolean): Bitmap? = withContext(Dispatchers.Default) {
+        samplePdf(setup, letterhead)?.let { PdfPreview.firstPage(it) }
+    }
+
+    /** First page of the report as it would print (not saved). */
+    suspend fun previewReport(
+        patient: Patient, template: Template, specimen: String, consultedBy: String,
+        received: String, printDate: String, values: Map<String, String>, letterhead: Boolean
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        try {
+            val setup = setupDao.get() ?: PageSetup()
+            val data = ReportData(
+                template.title.ifBlank { template.name }, specimen, consultedBy, received, printDate,
+                ReportDsl.parse(template.content), values
+            )
+            val bytes = ReportPdf.build(patient, data, setup, ReportPdf.loadAssets(store, setup), letterhead)
+            val out = File(context.cacheDir, "preview_${System.currentTimeMillis()}.pdf")
+            context.cacheDir.listFiles { f -> f.name.startsWith("preview_") }?.forEach { it.delete() }
+            out.writeBytes(bytes)
+            PdfPreview.firstPage(out)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ---------------------------------------------------------------- e-mail
+    suspend fun clinicName(): String = (setupDao.get()?.clinicName ?: "").ifBlank { "MediReport" }
+
+    private fun safeName(s: String) = s.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifEmpty { "report" }
+
+    /** Sends a stored report as an attachment. Returns null on success, otherwise an error message. */
+    suspend fun sendReportEmail(report: Report, patient: Patient, to: String, subject: String, body: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val cfg = prefs.getSmtp()
+                if (!cfg.isComplete) return@withContext "Mail server is not configured"
+                val ext = if (report.mimeType.contains("pdf")) "pdf" else report.fileName.substringAfterLast('.', "bin")
+                Mailer.send(
+                    cfg, listOf(to), subject, body,
+                    store.reportFile(report.fileName), safeName(report.title) + "." + ext, report.mimeType
+                )
+                null
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            }
+        }
+
+    /** Sends a test message. When it goes to the recovery address and succeeds, recovery becomes active. */
+    suspend fun sendTestMail(to: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val cfg = prefs.getSmtp()
+            Mailer.send(cfg, listOf(to), "MediReport test e-mail", "Your mail server settings work.")
+            if (to.trim().equals(prefs.recoveryEmail.first(), ignoreCase = true)) {
+                prefs.setMailVerified(true)
+            }
+            null
+        } catch (e: Exception) {
+            e.message ?: e.javaClass.simpleName
+        }
+    }
+
+    suspend fun recoveryReady() = prefs.recoveryReady()
+
+    /** Mails a 6-digit code to the recovery address. Returns null on success, otherwise an error message. */
+    suspend fun sendRecoveryCode(): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!prefs.recoveryReady()) return@withContext "NOT_READY"
+            val cfg = prefs.getSmtp()
+            val to = prefs.recoveryEmail.first()
+            val code = prefs.createOtp()
+            Mailer.send(
+                cfg, listOf(to), "MediReport password recovery code",
+                "Your MediReport admin password recovery code is: $code\n\nIt is valid for 10 minutes. " +
+                    "If you did not request it, ignore this message."
+            )
+            null
+        } catch (e: Exception) {
+            e.message ?: e.javaClass.simpleName
+        }
+    }
+
+    suspend fun resetPasswordWithCode(code: String, newPassword: String): OtpResult {
+        val r = prefs.verifyOtp(code)
+        if (r == OtpResult.OK) prefs.resetAdminPassword(newPassword)
+        return r
+    }
+
+    // ---------------------------------------------------------------- backup
     suspend fun exportBackup(target: Uri) = backup.export(target)
     suspend fun restoreBackup(source: Uri) = backup.restore(source)
 }

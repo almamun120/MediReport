@@ -1,88 +1,114 @@
 package com.medireport.portal.data
 
-import com.medireport.portal.util.TemplateEngine
-
 object DefaultTemplates {
-    private const val HEAD = """<p><strong>Patient Name:</strong> {{patient_name}}</p>
-<p><strong>Patient ID:</strong> {{patient_id}} &nbsp;&nbsp; <strong>Age/Sex:</strong> {{age}}/{{sex}}</p>
-<p><strong>Ref. By:</strong> {{ref_by}} &nbsp;&nbsp; <strong>Date:</strong> {{date}}</p>
-<hr>"""
-
-    private fun t(name: String, body: String): Template {
-        val content = body.trimIndent()
-        return Template(
-            name = name,
-            content = content,
-            parameters = TemplateEngine.detectParams(content).joinToString(",")
-        )
-    }
+    private fun t(name: String, title: String, specimen: String, body: String) =
+        Template(name = name, title = title, specimen = specimen, content = body.trimIndent().trim())
 
     fun all(): List<Template> = listOf(
         t(
-            "Blood Test Report (CBC)",
+            "Haematology (CBC)", "HAEMATOLOGY REPORT", "BLOOD",
             """
-            <h2 style="text-align:center;">Complete Blood Count (CBC)</h2>
-            $HEAD
-            <table>
-              <tr><th>Test Name</th><th>Result</th><th>Normal Range</th></tr>
-              <tr><td>Hemoglobin</td><td>{{hemoglobin}}</td><td>12 - 16 g/dL</td></tr>
-              <tr><td>WBC Count</td><td>{{wbc}}</td><td>4,000 - 11,000 /µL</td></tr>
-              <tr><td>Platelet Count</td><td>{{platelet}}</td><td>150,000 - 450,000 /µL</td></tr>
-              <tr><td>ESR</td><td>{{esr}}</td><td>0 - 20 mm/1st hr</td></tr>
-            </table>
-            <p style="margin-top:16px;"><strong>Remarks:</strong> {{remarks}}</p>
-            """
-        ),
-        t(
-            "X-Ray Report",
-            """
-            <h2 style="text-align:center;">X-Ray Report</h2>
-            $HEAD
-            <p><strong>Examination:</strong> {{examination}}</p>
-            <p><strong>Findings:</strong></p>
-            <p>{{findings}}</p>
-            <p><strong>Impression:</strong></p>
-            <p>{{impression}}</p>
-            """
-        ),
-        t(
-            "Urine R/E",
-            """
-            <h2 style="text-align:center;">Urine Routine Examination</h2>
-            $HEAD
-            <table>
-              <tr><th>Test</th><th>Result</th></tr>
-              <tr><td>Colour</td><td>{{colour}}</td></tr>
-              <tr><td>Albumin</td><td>{{albumin}}</td></tr>
-              <tr><td>Sugar</td><td>{{sugar}}</td></tr>
-              <tr><td>Pus Cells</td><td>{{pus_cells}}</td></tr>
-              <tr><td>RBC</td><td>{{rbc}}</td></tr>
-            </table>
-            <p style="margin-top:16px;"><strong>Remarks:</strong> {{remarks}}</p>
+            # Red Blood Cells
+            Haemoglobin | gm/dl | M: 13 - 18 gm/dl, F: 11.5 - 16.5 gm/dl, Child: 10.0 - 13.0 gm/dl, Infant (01 Year) 8.0 - 10.0 gm/dl
+            ESR (Westergren) | mm /hr | M: 0 - 10, F: 0 - 20 mm/hr.
+            # White Blood Cells
+            Total WBC Count | /Cumm | Adult: 4,000-11,000/cumm, Child: 5,000-15,000/cumm, Infant (1Yr.): 6,000-18,000/cumm
+            # Differential Count
+            Neutrophils | % | Child: 25-66%, Adult: 40-75%
+            Lymphocytes | % | Child: 52-62%, Adult: 20-50%
+            Monocytes | % | Child: 03-07%, Adult: 02-10%
+            Eosinophils | % | Child: 01-03%, Adult: 01-06%
+            Basophils | % | <1.0 %
+            # RBC Panel
+            Total RBC Count | m/ul | M: 4.5 - 6.5, F: 3.8 - 5.8 m/ul
+            HCT | % | M: 40 - 54 %, F: 37 - 47 %
+            MCV | fL | 76-94 fL
+            MCH | pg | 27-32 pg
+            MCHC | g/dL | 29-34 g/dL
+            PDW | fL | 9 - 17 fL
+            RDW | % | 11 - 16 %
+            # PLT Panel
+            Total Platelet Count | /Cumm | 1,50,000 - 4,50,000/Cumm
+            MPV | fL | 7 - 11 fL
+            PCT | % | 0.200 - 0.500 %
             """
         ),
         t(
-            "Lipid Profile",
+            "Urine R/E", "URINE EXAMINATION REPORT", "URINE",
             """
-            <h2 style="text-align:center;">Lipid Profile</h2>
-            $HEAD
-            <table>
-              <tr><th>Test</th><th>Result</th><th>Desirable</th></tr>
-              <tr><td>Total Cholesterol</td><td>{{cholesterol}}</td><td>&lt; 200 mg/dL</td></tr>
-              <tr><td>Triglycerides</td><td>{{triglycerides}}</td><td>&lt; 150 mg/dL</td></tr>
-              <tr><td>HDL</td><td>{{hdl}}</td><td>&gt; 40 mg/dL</td></tr>
-              <tr><td>LDL</td><td>{{ldl}}</td><td>&lt; 100 mg/dL</td></tr>
-            </table>
-            <p style="margin-top:16px;"><strong>Remarks:</strong> {{remarks}}</p>
+            # PHYSICAL EXAMINATION
+            Quantity | | | Sufficient
+            Colour | | | Straw
+            Appearance | | | Clear
+            Sediment | | | Nil
+            # CHEMICAL EXAMINATION
+            Reaction | | | Acidic
+            Excess of phosphate | | | Nil
+            Albumin | | | Nil
+            Sugar (Reducing substance) | | | Nil
+            # MICROSCOPIC EXAMINATION
+            Epithelial cells | /HPF | | 1-3
+            RBC | | | Nil
+            Pus cells | /HPF | | 0-2
+            Amor phosphate | | | Nil
+            Micro Organism | | | Nil
+            Crystals | | | Nil
+            Calcium oxalate | | | Nil
+            Uric acid Crystals | | | Nil
+            Urates | | | Nil
+            Triple phosphate | | | Nil
+            Sulphonomide crystals | | | Nil
+            Spermatozoa(Sperm) | | | Nil
+            Yeast cells | | | Nil
+            Bacteria(non specific) | | | Nil
             """
         ),
         t(
-            "General Report",
+            "Biochemistry (RBS & RFT)", "BIOCHEMISTRY REPORT", "BLOOD",
             """
-            <h2 style="text-align:center;">Medical Report</h2>
-            $HEAD
-            <h3>{{report_title}}</h3>
-            <p>{{report_content}}</p>
+            # Plasma Glucose & Corr. Urine Sugar
+            B.Sugar Random (R.B.S) | mmol/L | < 7.8 mmol/L
+            Corresponding Urine Sugar | | |
+            # RFT
+            S. Creatinine | mg/dl | 0.6-1.4 mg/dl
+            S. Uric Acid | mg/dl | Male : 3.4-7.0\nFemale : 2.4-5.7 mg/dl
+            """
+        ),
+        t(
+            "Lipid Profile", "BIOCHEMISTRY REPORT", "BLOOD",
+            """
+            # Lipid Profile
+            Total Cholesterol | mg/dl | < 200 mg/dl
+            Triglycerides | mg/dl | < 150 mg/dl
+            HDL Cholesterol | mg/dl | > 40 mg/dl
+            LDL Cholesterol | mg/dl | < 100 mg/dl
+            """
+        ),
+        t(
+            "Immunology – TSH", "IMMUNOLOGY REPORT", "BLOOD",
+            """
+            TSH | µIU/ml | Adult:0.27-5.01\nChild:0.70-5.70\nInfant:0.80-9.10\nNewborn:1.0-39.0
+            """
+        ),
+        t(
+            "Dengue NS1 Ag (ICT)", "IMMUNOLOGY REPORT", "BLOOD",
+            """
+            Dengue NS1 Ag(ICT) | | |
+            """
+        ),
+        t(
+            "X-Ray Report", "X-RAY REPORT", "",
+            """
+            @ Examination
+            @ Findings
+            @ Impression
+            """
+        ),
+        t(
+            "General Report", "MEDICAL REPORT", "",
+            """
+            @ Report title
+            @ Report details
             """
         )
     )

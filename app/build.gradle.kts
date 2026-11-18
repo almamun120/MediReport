@@ -70,7 +70,12 @@ android {
         buildConfig = true
     }
     packaging {
-        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources {
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}", "META-INF/NOTICE*", "META-INF/LICENSE*", "META-INF/DEPENDENCIES"
+            )
+            pickFirsts += setOf("META-INF/mailcap", "META-INF/mimetypes.default", "META-INF/javamail.*")
+        }
     }
     lint {
         abortOnError = false
@@ -107,4 +112,14 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Patient web portal (embedded HTTP server)
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    // SMTP e-mail (reports + password recovery)
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
+    // Barcode (Code 128) on report pages
+    implementation("com.google.zxing:core:3.5.3")
+    // Printing images
+    implementation("androidx.print:print:1.0.0")
 }

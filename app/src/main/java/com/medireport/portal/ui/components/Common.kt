@@ -26,6 +26,11 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Print
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.PublicOff
+import androidx.compose.material3.Switch
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -253,7 +258,10 @@ fun ReportCard(
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onDelete: (() -> Unit)? = null,
-    subtitle: String? = null
+    subtitle: String? = null,
+    onTogglePublish: ((Boolean) -> Unit)? = null,
+    onPrint: (() -> Unit)? = null,
+    onEmail: (() -> Unit)? = null
 ) {
     val isPdf = report.mimeType.contains("pdf")
     Card(
@@ -262,37 +270,68 @@ fun ReportCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
-                    .background(if (isPdf) Color(0x1AF43F5E) else Color(0x1A0EA5E9)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    if (isPdf) Icons.Outlined.PictureAsPdf else Icons.Outlined.Image, null,
-                    tint = if (isPdf) Color(0xFFF43F5E) else Color(0xFF0EA5E9)
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(report.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (report.source == Report.SOURCE_GENERATED) {
-                        Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(13.dp), tint = Teal600)
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    Text(
-                        subtitle ?: Formatters.dateTime(report.createdAt),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
+                        .background(if (isPdf) Color(0x1AF43F5E) else Color(0x1A0EA5E9)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (isPdf) Icons.Outlined.PictureAsPdf else Icons.Outlined.Image, null,
+                        tint = if (isPdf) Color(0xFFF43F5E) else Color(0xFF0EA5E9)
                     )
                 }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(report.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (report.source == Report.SOURCE_GENERATED) {
+                            Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(13.dp), tint = Teal600)
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(
+                            subtitle ?: Formatters.dateTime(report.createdAt),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
-            IconButton(onClick = onOpen) { Icon(Icons.Outlined.OpenInNew, stringResource(R.string.view)) }
-            IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, stringResource(R.string.share)) }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Outlined.Delete, stringResource(R.string.delete), tint = MaterialTheme.colorScheme.error)
+            if (onTogglePublish != null) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (report.published) Color(0x1A10B981) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                        .padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (report.published) Icons.Outlined.Public else Icons.Outlined.PublicOff, null,
+                        Modifier.size(18.dp),
+                        tint = if (report.published) Color(0xFF059669) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(if (report.published) R.string.published_on_web else R.string.not_published),
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Switch(checked = report.published, onCheckedChange = onTogglePublish)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = onOpen) { Icon(Icons.Outlined.OpenInNew, stringResource(R.string.view)) }
+                if (onPrint != null) IconButton(onClick = onPrint) { Icon(Icons.Outlined.Print, stringResource(R.string.print)) }
+                if (onEmail != null) IconButton(onClick = onEmail) { Icon(Icons.Outlined.Email, stringResource(R.string.send_email)) }
+                IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, stringResource(R.string.share)) }
+                if (onDelete != null) {
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Outlined.Delete, stringResource(R.string.delete), tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }

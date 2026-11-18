@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Cake
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -36,6 +37,7 @@ import com.medireport.portal.R
 import com.medireport.portal.data.Patient
 import com.medireport.portal.data.SaveResult
 import com.medireport.portal.ui.components.AppField
+import com.medireport.portal.util.Mailer
 import com.medireport.portal.ui.components.AppTopBar
 import com.medireport.portal.ui.components.Chip
 import com.medireport.portal.ui.rememberRepo
@@ -58,6 +60,9 @@ fun PatientFormScreen(patientId: Long, onBack: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var sex by remember { mutableStateOf("Male") }
     var age by remember { mutableStateOf("") }
+    var months by remember { mutableStateOf("0") }
+    var days by remember { mutableStateOf("0") }
+    var email by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var refBy by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf(false) }
@@ -73,12 +78,16 @@ fun PatientFormScreen(patientId: Long, onBack: () -> Unit) {
                 existing = it
                 code = it.patientCode; name = it.name; sex = it.sex
                 age = it.age.toString(); phone = it.phone; refBy = it.refBy
+                months = it.ageMonths.toString(); days = it.ageDays.toString(); email = it.email
             }
         }
     }
 
     val ageInt = age.toIntOrNull()
     val ageValid = ageInt != null && ageInt in 0..150
+    val monthsInt = months.toIntOrNull() ?: 0
+    val daysInt = days.toIntOrNull() ?: 0
+    val emailValid = email.isBlank() || Mailer.isValidEmail(email)
     val phoneValid = phone.filter { it.isDigit() }.length >= 6
 
     Scaffold(
@@ -110,16 +119,31 @@ fun PatientFormScreen(patientId: Long, onBack: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Male", "Female", "Other").forEach { s -> Chip(sexLabel(s), sex == s) { sex = s } }
             }
-            AppField(
-                age, { age = it.filter { c -> c.isDigit() }.take(3) }, stringResource(R.string.age),
-                leading = Icons.Filled.Cake, keyboardType = KeyboardType.Number,
-                error = if (submitted && !ageValid) stringResource(R.string.err_age) else null
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppField(
+                    age, { age = it.filter { c -> c.isDigit() }.take(3) }, stringResource(R.string.age_years),
+                    modifier = Modifier.weight(1f), leading = Icons.Filled.Cake, keyboardType = KeyboardType.Number,
+                    error = if (submitted && !ageValid) stringResource(R.string.err_age) else null
+                )
+                AppField(
+                    months, { months = it.filter { c -> c.isDigit() }.take(2) }, stringResource(R.string.age_months),
+                    modifier = Modifier.weight(1f), keyboardType = KeyboardType.Number
+                )
+                AppField(
+                    days, { days = it.filter { c -> c.isDigit() }.take(2) }, stringResource(R.string.age_days),
+                    modifier = Modifier.weight(1f), keyboardType = KeyboardType.Number
+                )
+            }
             AppField(
                 phone, { phone = it }, stringResource(R.string.phone), leading = Icons.Filled.Phone,
                 keyboardType = KeyboardType.Phone,
                 error = if (submitted && !phoneValid) stringResource(R.string.err_phone) else null,
                 supporting = stringResource(R.string.phone_login_hint)
+            )
+            AppField(
+                email, { email = it }, stringResource(R.string.email), leading = Icons.Filled.Email,
+                keyboardType = KeyboardType.Email,
+                error = if (submitted && !emailValid) stringResource(R.string.err_email_invalid) else null
             )
             AppField(refBy, { refBy = it }, stringResource(R.string.ref_by), leading = Icons.Filled.LocalHospital)
 
@@ -130,7 +154,7 @@ fun PatientFormScreen(patientId: Long, onBack: () -> Unit) {
             Button(
                 onClick = {
                     submitted = true
-                    if (code.isNotBlank() && name.isNotBlank() && ageValid && phoneValid) {
+                    if (code.isNotBlank() && name.isNotBlank() && ageValid && phoneValid && emailValid) {
                         saving = true
                         scope.launch {
                             val p = Patient(
@@ -139,6 +163,9 @@ fun PatientFormScreen(patientId: Long, onBack: () -> Unit) {
                                 name = name.trim(),
                                 sex = sex,
                                 age = ageInt ?: 0,
+                                ageMonths = monthsInt.coerceIn(0, 11),
+                                ageDays = daysInt.coerceIn(0, 30),
+                                email = email.trim(),
                                 phone = phone.trim(),
                                 refBy = refBy.trim(),
                                 createdAt = existing?.createdAt ?: System.currentTimeMillis()

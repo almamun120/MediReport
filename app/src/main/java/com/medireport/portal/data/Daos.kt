@@ -22,6 +22,9 @@ interface PatientDao {
     @Query("SELECT * FROM patients")
     suspend fun getAll(): List<Patient>
 
+    @Query("SELECT * FROM patients WHERE lower(patientCode) = lower(:code) LIMIT 1")
+    suspend fun byCode(code: String): Patient?
+
     @Query("SELECT * FROM patients WHERE lower(patientCode) = lower(:code) AND phone = :phone LIMIT 1")
     suspend fun login(code: String, phone: String): Patient?
 
@@ -66,6 +69,18 @@ interface ReportDao {
 
     @Query("SELECT * FROM reports")
     suspend fun getAll(): List<Report>
+
+    @Query("SELECT * FROM reports WHERE id = :id")
+    suspend fun getById(id: Long): Report?
+
+    @Query("SELECT * FROM reports WHERE patientId = :patientId AND published = 1 ORDER BY createdAt DESC")
+    suspend fun getPublishedByPatient(patientId: Long): List<Report>
+
+    @Query("UPDATE reports SET published = :published WHERE id = :id")
+    suspend fun setPublished(id: Long, published: Boolean)
+
+    @Query("UPDATE reports SET published = :published WHERE patientId = :patientId")
+    suspend fun setAllPublished(patientId: Long, published: Boolean)
 
     @Query("SELECT COUNT(*) FROM reports")
     fun observeCount(): Flow<Int>
@@ -126,4 +141,38 @@ interface PageSetupDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(setup: PageSetup)
+}
+
+@Dao
+interface SmsDao {
+    @Insert
+    suspend fun insert(r: SmsRequest): Long
+
+    @Query("SELECT * FROM sms_requests WHERE status = 0 ORDER BY receivedAt ASC, id ASC LIMIT 1")
+    suspend fun nextPending(): SmsRequest?
+
+    @Query("SELECT COUNT(*) FROM sms_requests WHERE status = 0")
+    suspend fun pendingCount(): Int
+
+    @Query("SELECT COUNT(*) FROM sms_requests WHERE status = 0")
+    fun observePending(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM sms_requests WHERE sender = :sender AND receivedAt >= :since AND id <> :exceptId")
+    suspend fun countFromSince(sender: String, since: Long, exceptId: Long): Int
+
+    /** identical request from the same number that is already waiting or was answered recently */
+    @Query("SELECT COUNT(*) FROM sms_requests WHERE sender = :sender AND body = :body AND id <> :exceptId AND receivedAt >= :since AND status IN (0, 1)")
+    suspend fun duplicates(sender: String, body: String, since: Long, exceptId: Long): Int
+
+    @Query("UPDATE sms_requests SET status = :status, reply = :reply, handledAt = :at WHERE id = :id")
+    suspend fun finish(id: Long, status: Int, reply: String, at: Long)
+
+    @Query("SELECT * FROM sms_requests ORDER BY id DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<SmsRequest>>
+
+    @Query("DELETE FROM sms_requests WHERE receivedAt < :before AND status <> 0")
+    suspend fun deleteOlderThan(before: Long)
+
+    @Query("DELETE FROM sms_requests")
+    suspend fun clear()
 }

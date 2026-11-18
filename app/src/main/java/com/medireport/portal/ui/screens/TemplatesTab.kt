@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.medireport.portal.R
+import com.medireport.portal.util.ReportDsl
 import com.medireport.portal.data.Template
 import com.medireport.portal.ui.components.ConfirmDialog
 import com.medireport.portal.ui.components.EmptyState
@@ -60,7 +61,7 @@ fun TemplatesTab(onEdit: (Long) -> Unit) {
         ) {
             items(list, key = { it.id }) { t ->
                 var menu by remember { mutableStateOf(false) }
-                val params = t.parameters.split(",").filter { it.isNotBlank() }
+                val fieldTotal = ReportDsl.fieldCount(t.content)
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { onEdit(t.id) },
                     shape = MaterialTheme.shapes.large,
@@ -77,7 +78,7 @@ fun TemplatesTab(onEdit: (Long) -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(t.name, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                stringResource(R.string.fields_count, params.size),
+                                stringResource(R.string.fields_count, fieldTotal),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

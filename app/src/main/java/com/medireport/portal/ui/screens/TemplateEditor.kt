@@ -1,6 +1,5 @@
 package com.medireport.portal.ui.screens
 
-import android.webkit.WebView
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,11 +14,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,56 +30,58 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.medireport.portal.R
 import com.medireport.portal.ui.components.AppField
 import com.medireport.portal.ui.components.AppTopBar
 import com.medireport.portal.ui.components.Chip
 import com.medireport.portal.ui.rememberRepo
-import com.medireport.portal.util.TemplateEngine
+import com.medireport.portal.util.ReportDsl
+import com.medireport.portal.util.ReportItem
 import kotlinx.coroutines.launch
 
+/**
+ * Templates are written in a tiny line-based language (see [ReportDsl]):
+ *   # Section | Test | unit | reference | default | @ Free text field | > Fixed note
+ */
 @Composable
 fun TemplateEditorScreen(templateId: Long, onBack: () -> Unit) {
     val repo = rememberRepo()
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var specimen by remember { mutableStateOf("") }
     var content by remember { mutableStateOf(TextFieldValue("")) }
     var submitted by remember { mutableStateOf(false) }
-    var preview by remember { mutableStateOf(false) }
 
     LaunchedEffect(templateId) {
         if (templateId != 0L) {
             repo.getTemplate(templateId)?.let {
-                name = it.name
+                name = it.name; title = it.title; specimen = it.specimen
                 content = TextFieldValue(it.content)
             }
         } else if (content.text.isEmpty()) {
-            content = TextFieldValue(
-                "<h2 style=\"text-align:center;\">Report Title</h2>\n" +
-                    "<p><strong>Patient Name:</strong> {{patient_name}}</p>\n" +
-                    "<p><strong>Patient ID:</strong> {{patient_id}} &nbsp; <strong>Age/Sex:</strong> {{age}}/{{sex}}</p>\n" +
-                    "<p><strong>Date:</strong> {{date}}</p>\n<hr>\n<p>{{report_content}}</p>"
-            )
+            content = TextFieldValue("# Section\nTest name | unit | 10 - 20 unit | \n@ Findings\n> Note printed as it is")
         }
     }
 
-    fun insert(token: String) {
+    fun insertLine(token: String) {
         val sel = content.selection
         val start = minOf(sel.start, sel.end).coerceIn(0, content.text.length)
         val end = maxOf(sel.start, sel.end).coerceIn(0, content.text.length)
-        val newText = content.text.replaceRange(start, end, token)
-        content = TextFieldValue(newText, TextRange(start + token.length))
+        val before = content.text.substring(0, start)
+        val prefix = if (before.isEmpty() || before.endsWith("\n")) "" else "\n"
+        val ins = prefix + token + "\n"
+        content = TextFieldValue(content.text.replaceRange(start, end, ins), TextRange(start + ins.length))
     }
 
-    val detected = TemplateEngine.detectParams(content.text)
+    val items = ReportDsl.parse(content.text)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -99,75 +100,81 @@ fun TemplateEditorScreen(templateId: Long, onBack: () -> Unit) {
                 name, { name = it }, stringResource(R.string.template_name), leading = Icons.Filled.Description,
                 error = if (submitted && name.isBlank()) stringResource(R.string.err_required) else null
             )
+            AppField(
+                title, { title = it }, stringResource(R.string.report_heading), leading = Icons.Filled.Title,
+                supporting = stringResource(R.string.report_heading_hint)
+            )
+            AppField(specimen, { specimen = it }, stringResource(R.string.specimen))
 
-            Text(stringResource(R.string.insert_placeholder), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.insert_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                (TemplateEngine.BUILT_IN.toList() + "date").forEach { key ->
-                    Chip("{{$key}}", false) { insert("{{$key}}") }
-                }
-            }
-            Text(stringResource(R.string.insert_snippet), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip(stringResource(R.string.snip_heading), false) { insert("<h3>Heading</h3>\n") }
-                Chip(stringResource(R.string.snip_line), false) { insert("<hr>\n") }
-                Chip(stringResource(R.string.snip_table), false) {
-                    insert("<table>\n  <tr><th>Test</th><th>Result</th><th>Normal Range</th></tr>\n  <tr><td>Name</td><td>{{result}}</td><td>-</td></tr>\n</table>\n")
-                }
-                Chip(stringResource(R.string.snip_para), false) { insert("<p>{{notes}}</p>\n") }
+                Chip(stringResource(R.string.snip_section), false) { insertLine("# Section name") }
+                Chip(stringResource(R.string.snip_test), false) { insertLine("Test name | unit | 10 - 20 unit | ") }
+                Chip(stringResource(R.string.snip_field), false) { insertLine("@ Findings") }
+                Chip(stringResource(R.string.snip_note), false) { insertLine("> Note printed as it is") }
             }
 
             OutlinedTextField(
                 value = content,
                 onValueChange = { content = it },
-                label = { Text(stringResource(R.string.template_html)) },
-                minLines = 10,
+                label = { Text(stringResource(R.string.template_lines)) },
+                minLines = 12,
                 textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
                 shape = MaterialTheme.shapes.medium,
                 isError = submitted && content.text.isBlank(),
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(
+                stringResource(R.string.template_syntax_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-            if (detected.isNotEmpty()) {
-                Text(stringResource(R.string.detected_fields), style = MaterialTheme.typography.titleMedium)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    detected.forEach { Chip(TemplateEngine.humanize(it), true) {} }
-                }
-            }
-
-            if (preview) {
-                val html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>" +
-                    "<style>body{font-family:sans-serif;font-size:14px;padding:8px}table{border-collapse:collapse;width:100%}" +
-                    "th,td{border:1px solid #999;padding:5px 7px;text-align:left}</style></head><body>" +
-                    content.text + "</body></html>"
-                Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxWidth().height(360.dp),
-                        factory = { ctx -> WebView(ctx).apply { settings.javaScriptEnabled = false } },
-                        update = { it.loadDataWithBaseURL(null, html, "text/html", "utf-8", null) }
-                    )
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = { preview = !preview },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) { Text(stringResource(if (preview) R.string.hide_preview else R.string.preview)) }
-                Button(
-                    onClick = {
-                        submitted = true
-                        if (name.isNotBlank() && content.text.isNotBlank()) {
-                            scope.launch {
-                                repo.saveTemplate(templateId, name, content.text)
-                                onBack()
+            // live preview of what the parser understood
+            if (items.isNotEmpty()) {
+                Text(stringResource(R.string.template_preview), style = MaterialTheme.typography.titleMedium)
+                Card(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items.forEach { item ->
+                            when (item) {
+                                is ReportItem.Section -> Text(
+                                    item.name, fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                                is ReportItem.Test -> Row(Modifier.fillMaxWidth()) {
+                                    Text(item.name, Modifier.weight(1.2f), style = MaterialTheme.typography.bodyMedium)
+                                    Text(item.unit, Modifier.weight(0.6f), style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(item.ref.replace("\n", " · "), Modifier.weight(1.4f), style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                is ReportItem.Field -> Text("▭ " + item.label, style = MaterialTheme.typography.bodyMedium)
+                                is ReportItem.Note -> Text(item.text, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                    },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) { Text(stringResource(R.string.save)) }
+                    }
+                }
             }
+
+            Button(
+                onClick = {
+                    submitted = true
+                    if (name.isNotBlank() && content.text.isNotBlank()) {
+                        scope.launch {
+                            repo.saveTemplate(templateId, name.trim(), title.trim(), specimen.trim(), content.text)
+                            onBack()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.medium
+            ) { Text(stringResource(R.string.save)) }
             Spacer(Modifier.height(16.dp))
         }
     }

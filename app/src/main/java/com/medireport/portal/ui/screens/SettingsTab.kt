@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Logout
@@ -59,6 +60,7 @@ import androidx.core.os.LocaleListCompat
 import com.medireport.portal.BuildConfig
 import com.medireport.portal.R
 import com.medireport.portal.data.ThemeMode
+import com.medireport.portal.ui.ChangeResult
 import com.medireport.portal.ui.SettingsViewModel
 import com.medireport.portal.ui.components.AppField
 import com.medireport.portal.ui.components.Chip
@@ -70,12 +72,14 @@ import com.medireport.portal.util.Formatters
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsTab(snackbar: SnackbarHostState, onPageSetup: () -> Unit, onLogout: () -> Unit) {
+fun SettingsTab(snackbar: SnackbarHostState, onPageSetup: () -> Unit, onMailSettings: () -> Unit, onLogout: () -> Unit) {
     val vm: SettingsViewModel = repoViewModel()
     val repo = rememberRepo()
     val scope = rememberCoroutineScope()
     val theme by vm.themeMode.collectAsState()
     val adminUser by vm.adminUser.collectAsState()
+    val recoveryReady by vm.recoveryReady.collectAsState()
+    val smtp by repo.prefs.smtp.collectAsState(initial = com.medireport.portal.data.SmtpConfig())
     var lang by remember { mutableStateOf(AppCompatDelegate.getApplicationLocales().toLanguageTags()) }
     var showCreds by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -86,6 +90,7 @@ fun SettingsTab(snackbar: SnackbarHostState, onPageSetup: () -> Unit, onLogout: 
     val msgRestoreOk = stringResource(R.string.restore_ok)
     val msgRestoreFail = stringResource(R.string.restore_fail)
     val msgCredsOk = stringResource(R.string.creds_changed)
+    val msgNeedMail = stringResource(R.string.need_mail_first)
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) {
@@ -131,11 +136,41 @@ fun SettingsTab(snackbar: SnackbarHostState, onPageSetup: () -> Unit, onLogout: 
             ActionRow(stringResource(R.string.page_setup), stringResource(R.string.page_setup_desc), onPageSetup)
         }
 
+        SettingsCard(Icons.Outlined.Email, stringResource(R.string.mail_server)) {
+            ActionRow(
+                stringResource(R.string.mail_settings),
+                when {
+                    recoveryReady -> stringResource(R.string.mail_status_ready)
+                    smtp.isComplete -> stringResource(R.string.mail_status_untested)
+                    else -> stringResource(R.string.mail_status_none)
+                },
+                onMailSettings
+            )
+        }
+
+        PortalCard(snackbar)
+
+        SmsCard(snackbar)
+
         SettingsCard(Icons.Outlined.Security, stringResource(R.string.security)) {
             ActionRow(
                 stringResource(R.string.change_credentials),
                 stringResource(R.string.signed_in_as, adminUser)
-            ) { showCreds = true }
+            ) {
+                if (recoveryReady) showCreds = true
+                else {
+                    scope.launch { snackbar.showSnackbar(msgNeedMail) }
+                    onMailSettings()
+                }
+            }
+            if (!recoveryReady) {
+                Text(
+                    stringResource(R.string.change_creds_requires_mail),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         SettingsCard(Icons.Outlined.Backup, stringResource(R.string.data_backup)) {
@@ -185,12 +220,12 @@ fun SettingsTab(snackbar: SnackbarHostState, onPageSetup: () -> Unit, onLogout: 
             currentUser = adminUser,
             onDismiss = { showCreds = false },
             onSubmit = { cur, user, pass ->
-                val ok = vm.changeCredentials(cur, user, pass)
-                if (ok) {
+                val r = vm.changeCredentials(cur, user, pass)
+                if (r == ChangeResult.OK) {
                     showCreds = false
                     snackbar.showSnackbar(msgCredsOk)
                 }
-                ok
+                r
             }
         )
     }
@@ -221,7 +256,7 @@ private fun setLanguage(tag: String) {
 }
 
 @Composable
-private fun SettingsCard(icon: ImageVector, title: String, content: @Composable () -> Unit) {
+internal fun SettingsCard(icon: ImageVector, title: String, content: @Composable () -> Unit) {
     Card(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -244,7 +279,7 @@ private fun SettingsCard(icon: ImageVector, title: String, content: @Composable 
 }
 
 @Composable
-private fun ActionRow(title: String, subtitle: String, onClick: () -> Unit) {
+internal fun ActionRow(title: String, subtitle: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -261,7 +296,7 @@ private fun ActionRow(title: String, subtitle: String, onClick: () -> Unit) {
 private fun ChangeCredentialsDialog(
     currentUser: String,
     onDismiss: () -> Unit,
-    onSubmit: suspend (current: String, user: String, pass: String) -> Boolean
+    onSubmit: suspend (current: String, user: String, pass: String) -> ChangeResult
 ) {
     val scope = rememberCoroutineScope()
     var cur by remember { mutableStateOf("") }
@@ -294,9 +329,13 @@ private fun ChangeCredentialsDialog(
                         else -> {
                             loading = true
                             scope.launch {
-                                val ok = onSubmit(cur, user, pass)
+                                val r = onSubmit(cur, user, pass)
                                 loading = false
-                                if (!ok) error = R.string.err_current_wrong
+                                when (r) {
+                                    ChangeResult.WRONG_CURRENT -> error = R.string.err_current_wrong
+                                    ChangeResult.MAIL_REQUIRED -> error = R.string.change_creds_requires_mail
+                                    ChangeResult.OK -> {}
+                                }
                             }
                         }
                     }

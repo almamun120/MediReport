@@ -88,6 +88,7 @@ fun AdminHomeScreen(
     onNewReport: (Long) -> Unit,
     onEditTemplate: (Long) -> Unit,
     onPageSetup: () -> Unit,
+    onMailSettings: () -> Unit,
     onLogout: () -> Unit
 ) {
     val tabs = listOf(
@@ -142,7 +143,7 @@ fun AdminHomeScreen(
                 )
                 1 -> PatientsTab(onOpenPatient, onEditPatient)
                 2 -> TemplatesTab(onEditTemplate)
-                else -> SettingsTab(snackbar, onPageSetup, onLogout)
+                else -> SettingsTab(snackbar, onPageSetup, onMailSettings, onLogout)
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.medireport.portal.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +23,9 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.medireport.portal.R
+import com.medireport.portal.data.OtpResult
 import com.medireport.portal.data.Prefs
 import com.medireport.portal.ui.AuthResult
 import com.medireport.portal.ui.AuthViewModel
@@ -62,7 +67,6 @@ private fun LoginScaffold(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    onBack: () -> Unit,
     content: @Composable () -> Unit
 ) {
     Column(
@@ -74,9 +78,7 @@ private fun LoginScaffold(
     ) {
         Box(Modifier.fillMaxWidth().background(heroBrush(isAppDark())).statusBarsPadding()) {
             Column(Modifier.padding(start = 8.dp, end = 24.dp, bottom = 56.dp)) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, stringResource(R.string.back), tint = Color.White)
-                }
+                Spacer(Modifier.height(24.dp))
                 Column(Modifier.padding(start = 16.dp)) {
                     Box(
                         Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f)),
@@ -108,7 +110,7 @@ private fun errorText(r: AuthResult, invalidRes: Int): String? = when (r) {
 }
 
 @Composable
-fun AdminLoginScreen(onSuccess: () -> Unit, onBack: () -> Unit) {
+fun AdminLoginScreen(onSuccess: () -> Unit) {
     val vm: AuthViewModel = repoViewModel()
     val repo = rememberRepo()
     val scope = rememberCoroutineScope()
@@ -117,12 +119,12 @@ fun AdminLoginScreen(onSuccess: () -> Unit, onBack: () -> Unit) {
     var pass by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<AuthResult?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var showForgot by remember { mutableStateOf(false) }
 
     LoginScaffold(
         Icons.Filled.AdminPanelSettings,
         stringResource(R.string.admin_login),
-        stringResource(R.string.admin_login_sub),
-        onBack
+        stringResource(R.string.admin_login_sub)
     ) {
         AppField(user, { user = it; result = null }, stringResource(R.string.username), leading = Icons.Filled.Person)
         Spacer(Modifier.height(10.dp))
@@ -158,52 +160,98 @@ fun AdminLoginScreen(onSuccess: () -> Unit, onBack: () -> Unit) {
             if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
             else Text(stringResource(R.string.login))
         }
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onClick = { showForgot = true }) { Text(stringResource(R.string.forgot_password)) }
+        }
     }
+    if (showForgot) ForgotPasswordDialog(onDismiss = { showForgot = false })
 }
 
-@Composable
-fun PatientLoginScreen(onSuccess: () -> Unit, onBack: () -> Unit) {
-    val vm: AuthViewModel = repoViewModel()
-    val scope = rememberCoroutineScope()
-    var code by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf<AuthResult?>(null) }
-    var loading by remember { mutableStateOf(false) }
+private enum class ForgotStep { SEND, CODE }
 
-    LoginScaffold(
-        Icons.Filled.Person,
-        stringResource(R.string.patient_login),
-        stringResource(R.string.patient_login_sub),
-        onBack
-    ) {
-        AppField(code, { code = it; result = null }, stringResource(R.string.patient_id), leading = Icons.Filled.Badge)
-        Spacer(Modifier.height(10.dp))
-        AppField(
-            phone, { phone = it; result = null }, stringResource(R.string.phone_password),
-            leading = Icons.Filled.Phone, keyboardType = KeyboardType.Phone
-        )
-        result?.let { r ->
-            errorText(r, R.string.err_patient_invalid)?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 6.dp))
-            }
-        }
-        Spacer(Modifier.height(18.dp))
-        Button(
-            onClick = {
-                loading = true
-                scope.launch {
-                    val r = vm.patientLogin(code, phone)
-                    loading = false
-                    if (r == AuthResult.Success) onSuccess() else result = r
+@Composable
+private fun ForgotPasswordDialog(onDismiss: () -> Unit) {
+    val repo = rememberRepo()
+    val scope = rememberCoroutineScope()
+    val email by repo.prefs.recoveryEmail.collectAsState(initial = "")
+    var ready by remember { mutableStateOf<Boolean?>(null) }
+    var step by remember { mutableStateOf(ForgotStep.SEND) }
+    var code by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var done by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { ready = repo.recoveryReady() }
+
+    val errShort = stringResource(R.string.err_password_short)
+    val errMismatch = stringResource(R.string.err_password_mismatch)
+    val errCode = stringResource(R.string.err_code_wrong)
+    val errExpired = stringResource(R.string.err_code_expired)
+    val errMany = stringResource(R.string.err_code_many)
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(stringResource(R.string.forgot_password)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                when {
+                    ready == null -> CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    ready == false -> Text(stringResource(R.string.recovery_not_ready), style = MaterialTheme.typography.bodyMedium)
+                    done -> Text(stringResource(R.string.password_reset_ok), style = MaterialTheme.typography.bodyMedium)
+                    step == ForgotStep.SEND -> Text(
+                        stringResource(R.string.recovery_send_desc, maskEmail(email)),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    else -> {
+                        Text(stringResource(R.string.recovery_code_sent), style = MaterialTheme.typography.bodyMedium)
+                        AppField(code, { code = it.filter(Char::isDigit).take(6); error = null }, stringResource(R.string.recovery_code),
+                            keyboardType = KeyboardType.Number)
+                        PasswordField(pass, { pass = it; error = null }, stringResource(R.string.new_password), Icons.Filled.Lock)
+                        PasswordField(confirm, { confirm = it; error = null }, stringResource(R.string.confirm_password), Icons.Filled.Lock)
+                    }
                 }
-            },
-            enabled = !loading && code.isNotBlank() && phone.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = MaterialTheme.shapes.medium
-        ) {
-            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-            else Text(stringResource(R.string.login))
-        }
-    }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            if (ready == true && !done) {
+                TextButton(
+                    enabled = !busy && (step == ForgotStep.SEND || (code.length == 6 && pass.isNotEmpty())),
+                    onClick = {
+                        if (step == ForgotStep.SEND) {
+                            busy = true; error = null
+                            scope.launch {
+                                val e = repo.sendRecoveryCode()
+                                busy = false
+                                if (e == null) step = ForgotStep.CODE else error = e
+                            }
+                        } else if (pass.length < 6) error = errShort
+                        else if (pass != confirm) error = errMismatch
+                        else {
+                            busy = true; error = null
+                            scope.launch {
+                                val r = repo.resetPasswordWithCode(code, pass)
+                                busy = false
+                                when (r) {
+                                    OtpResult.OK -> done = true
+                                    OtpResult.WRONG -> error = errCode
+                                    OtpResult.EXPIRED -> error = errExpired
+                                    OtpResult.TOO_MANY -> error = errMany
+                                }
+                            }
+                        }
+                    }
+                ) { Text(stringResource(if (step == ForgotStep.SEND) R.string.send_code else R.string.reset_password)) }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(if (done) R.string.close else R.string.cancel)) } }
+    )
+}
+
+private fun maskEmail(e: String): String {
+    val at = e.indexOf('@')
+    if (at < 2) return e
+    return e.substring(0, 1) + "***" + e.substring(at - 1)
 }

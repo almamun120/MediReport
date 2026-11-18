@@ -58,6 +58,9 @@ import com.medireport.portal.ui.components.ReportCard
 import com.medireport.portal.ui.components.SectionTitle
 import com.medireport.portal.ui.rememberRepo
 import com.medireport.portal.util.Intents
+import com.medireport.portal.util.Printing
+import com.medireport.portal.ui.components.SendEmailDialog
+import androidx.compose.material3.Switch
 import kotlinx.coroutines.launch
 
 @Composable
@@ -77,6 +80,10 @@ fun PatientDetailScreen(
     var pendingUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var pendingTitle by remember { mutableStateOf("") }
     var toDelete by remember { mutableStateOf<Report?>(null) }
+    var emailFor by remember { mutableStateOf<Report?>(null) }
+    var publishNew by remember { mutableStateOf(false) }
+    val msgSent = stringResource(R.string.email_sent)
+    val msgPrintFail = stringResource(R.string.print_failed)
     val uploadFail = stringResource(R.string.upload_failed)
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -122,8 +129,9 @@ fun PatientDetailScreen(
                         }
                         Spacer(Modifier.height(12.dp))
                         InfoRow(stringResource(R.string.sex), sexLabel(p.sex))
-                        InfoRow(stringResource(R.string.age), p.age.toString())
+                        InfoRow(stringResource(R.string.age), p.ageText)
                         InfoRow(stringResource(R.string.phone), p.phone)
+                        InfoRow(stringResource(R.string.email), p.email.ifBlank { "-" })
                         InfoRow(stringResource(R.string.ref_by), p.refBy.ifBlank { "-" })
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -150,7 +158,16 @@ fun PatientDetailScreen(
                     }
                 }
             }
-            item { SectionTitle(stringResource(R.string.reports_count, reports.size)) }
+            item {
+                SectionTitle(stringResource(R.string.reports_count, reports.size)) {
+                    if (reports.isNotEmpty()) {
+                        val allOn = reports.all { it.published }
+                        TextButton(onClick = { scope.launch { repo.setAllPublished(patientId, !allOn) } }) {
+                            Text(stringResource(if (allOn) R.string.unpublish_all else R.string.publish_all))
+                        }
+                    }
+                }
+            }
             if (reports.isEmpty()) {
                 item { EmptyState(Icons.Outlined.FolderOpen, stringResource(R.string.no_reports), stringResource(R.string.no_reports_patient_admin)) }
             } else {
@@ -159,7 +176,14 @@ fun PatientDetailScreen(
                         report = r,
                         onOpen = { Intents.openFile(context, repo.store.reportFile(r.fileName), r.mimeType, repo.store) },
                         onShare = { Intents.shareFile(context, repo.store.reportFile(r.fileName), r.mimeType, r.title, repo.store) },
-                        onDelete = { toDelete = r }
+                        onDelete = { toDelete = r },
+                        onTogglePublish = { on -> scope.launch { repo.setPublished(r.id, on) } },
+                        onPrint = {
+                            if (!Printing.print(context, repo.store.reportFile(r.fileName), r.mimeType, r.title)) {
+                                scope.launch { snackbar.showSnackbar(msgPrintFail) }
+                            }
+                        },
+                        onEmail = { emailFor = r }
                     )
                 }
             }
@@ -170,7 +194,15 @@ fun PatientDetailScreen(
         AlertDialog(
             onDismissRequest = { pendingUri = null },
             title = { Text(stringResource(R.string.report_name)) },
-            text = { AppField(pendingTitle, { pendingTitle = it }, stringResource(R.string.report_name)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppField(pendingTitle, { pendingTitle = it }, stringResource(R.string.report_name))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.publish_to_web), Modifier.weight(1f))
+                        Switch(checked = publishNew, onCheckedChange = { publishNew = it })
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(
                     enabled = pendingTitle.isNotBlank(),
@@ -178,13 +210,23 @@ fun PatientDetailScreen(
                         val title = pendingTitle.trim()
                         pendingUri = null
                         scope.launch {
-                            if (!repo.addUploadedReport(patientId, title, uri)) snackbar.showSnackbar(uploadFail)
+                            if (!repo.addUploadedReport(patientId, title, uri, publishNew)) snackbar.showSnackbar(uploadFail)
                         }
                     }
                 ) { Text(stringResource(R.string.upload)) }
             },
             dismissButton = { TextButton(onClick = { pendingUri = null }) { Text(stringResource(R.string.cancel)) } }
         )
+    }
+
+    emailFor?.let { r ->
+        if (p != null) {
+            SendEmailDialog(
+                report = r, patient = p,
+                onDismiss = { emailFor = null },
+                onResult = { err -> scope.launch { snackbar.showSnackbar(err ?: msgSent) } }
+            )
+        }
     }
 
     toDelete?.let { r ->

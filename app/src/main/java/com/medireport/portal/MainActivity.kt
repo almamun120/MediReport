@@ -17,6 +17,8 @@ import androidx.compose.runtime.setValue
 import com.medireport.portal.data.ThemeMode
 import com.medireport.portal.ui.AppRoot
 import com.medireport.portal.ui.theme.MediReportTheme
+import com.medireport.portal.sms.SmsProcessor
+import com.medireport.portal.web.PortalService
 import kotlinx.coroutines.launch
 import androidx.lifecycle.lifecycleScope
 
@@ -29,7 +31,11 @@ class MainActivity : AppCompatActivity() {
         val repo = (application as App).repository
         applyBars()
 
-        lifecycleScope.launch { repo.seed() }
+        lifecycleScope.launch {
+            repo.seed()
+            if (repo.prefs.getPortal().autoStart) PortalService.start(this@MainActivity)
+            if (repo.prefs.getSms().enabled) SmsProcessor.kick(this@MainActivity)
+        }
 
         setContent {
             val mode by repo.prefs.themeMode.collectAsState(initial = ThemeMode.SYSTEM)

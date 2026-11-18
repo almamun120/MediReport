@@ -10,7 +10,6 @@ import com.medireport.portal.App
 import com.medireport.portal.data.Patient
 import com.medireport.portal.data.Repository
 import com.medireport.portal.data.ReportWithPatient
-import com.medireport.portal.data.Role
 import com.medireport.portal.data.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,24 +56,10 @@ class AuthViewModel(private val repo: Repository) : ViewModel() {
         val ok = withContext(Dispatchers.Default) { prefs.verifyAdmin(user, pass) }
         return if (ok) {
             prefs.clearFailures("admin")
-            prefs.startSession(Role.ADMIN)
+            prefs.startSession()
             AuthResult.Success
         } else {
             val l = prefs.recordFailure("admin")
-            if (l > 0) AuthResult.Locked(secs(l)) else AuthResult.Invalid
-        }
-    }
-
-    suspend fun patientLogin(code: String, phone: String): AuthResult {
-        val lock = prefs.lockRemaining("patient")
-        if (lock > 0) return AuthResult.Locked(secs(lock))
-        val p = repo.patientLogin(code, phone)
-        return if (p != null) {
-            prefs.clearFailures("patient")
-            prefs.startSession(Role.PATIENT, p.id)
-            AuthResult.Success
-        } else {
-            val l = prefs.recordFailure("patient")
             if (l > 0) AuthResult.Locked(secs(l)) else AuthResult.Invalid
         }
     }
@@ -162,12 +147,23 @@ class SettingsViewModel(private val repo: Repository) : ViewModel() {
         viewModelScope.launch { repo.prefs.setTheme(mode) }
     }
 
-    /** Verifies the current password first. Returns true if changed. */
-    suspend fun changeCredentials(current: String, newUser: String, newPass: String): Boolean {
+    val recoveryReady: StateFlow<Boolean> = combine(
+        repo.prefs.smtp, repo.prefs.recoveryEmail, repo.prefs.mailVerified
+    ) { smtp, email, ok -> smtp.isComplete && email.isNotBlank() && ok }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /**
+     * Changes the admin login. Requires a working (tested) mail server + recovery address first,
+     * so the password can always be recovered by e-mail.
+     */
+    suspend fun changeCredentials(current: String, newUser: String, newPass: String): ChangeResult {
+        if (!repo.recoveryReady()) return ChangeResult.MAIL_REQUIRED
         val user = repo.prefs.adminUsername.first()
         val ok = withContext(Dispatchers.Default) { repo.prefs.verifyAdmin(user, current) }
-        if (!ok) return false
+        if (!ok) return ChangeResult.WRONG_CURRENT
         withContext(Dispatchers.Default) { repo.prefs.changeAdminCredentials(newUser, newPass) }
-        return true
+        return ChangeResult.OK
     }
 }
+
+enum class ChangeResult { OK, WRONG_CURRENT, MAIL_REQUIRED }
