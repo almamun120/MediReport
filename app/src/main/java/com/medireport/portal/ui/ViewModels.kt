@@ -29,6 +29,7 @@ class RepoViewModelFactory(private val repo: Repository) : ViewModelProvider.Fac
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T = when (modelClass) {
             AuthViewModel::class.java -> AuthViewModel(repo)
+            DashboardViewModel::class.java -> DashboardViewModel(repo)
             PatientsViewModel::class.java -> PatientsViewModel(repo)
             SettingsViewModel::class.java -> SettingsViewModel(repo)
         else -> throw IllegalArgumentException("Unknown ViewModel: " + modelClass.name)
