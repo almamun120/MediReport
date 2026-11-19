@@ -25,9 +25,14 @@ import java.util.Calendar
 import java.util.Locale
 
 class RepoViewModelFactory(private val repo: Repository) : ViewModelProvider.Factory {
+    // explicit construction: no reflection, so code shrinking (R8) cannot break it
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        modelClass.getConstructor(Repository::class.java).newInstance(repo)
+    override fun <T : ViewModel> create(modelClass: Class<T>): T = when (modelClass) {
+            AuthViewModel::class.java -> AuthViewModel(repo)
+            PatientsViewModel::class.java -> PatientsViewModel(repo)
+            SettingsViewModel::class.java -> SettingsViewModel(repo)
+        else -> throw IllegalArgumentException("Unknown ViewModel: " + modelClass.name)
+    } as T
 }
 
 @Composable

@@ -15,3 +15,8 @@
 # NanoHTTPD
 -keep class fi.iki.elonen.** { *; }
 -dontwarn fi.iki.elonen.**
+
+# ViewModels (also created through the lifecycle library)
+-keep class * extends androidx.lifecycle.ViewModel { <init>(...); }
+# stack traces of the on-screen crash report stay readable
+-keepattributes SourceFile,LineNumberTable
